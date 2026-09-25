@@ -3,125 +3,213 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ポケット歩数計 (ピクセルシフト搭載)</title>
+    <title>歩数計デバッガー＆コイン</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; background: #000; color: #fff; margin: 0; padding: 20px; overflow: hidden; }
-        /* 焼き付き対策のため、全体的にコントラストを抑えた配色にしています */
-        .container { max-width: 400px; margin: 50px auto; padding: 20px; border-radius: 20px; background: #111; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-        
-        /* ピクセルシフトの対象となるコンテナ（位置を動かす） */
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; background: #000; color: #fff; margin: 0; padding: 10px; overflow-x: hidden; }
+        .container { max-width: 400px; margin: 10px auto; padding: 15px; border-radius: 20px; background: #111; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
         #shiftTarget { position: relative; transition: all 0.5s ease; }
         
-        .steps { font-size: 5rem; font-weight: bold; color: #00cc66; margin: 30px 0; }
-        .notice { background: #b3241e; color: #fff; padding: 12px; border-radius: 10px; font-weight: bold; font-size: 0.9rem; margin-bottom: 20px; }
-        button { background: #00cc66; color: #000; border: none; padding: 16px 32px; font-size: 1.2rem; border-radius: 30px; cursor: pointer; font-weight: bold; width: 100%; }
+        /* 🔥 デバッグ表示エリア */
+        .debug-panel { background: #222; border: 2px dashed #00cc66; padding: 12px; border-radius: 15px; margin-bottom: 15px; text-align: left; font-family: monospace; }
+        .debug-title { font-size: 0.9rem; font-weight: bold; color: #00cc66; margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .debug-row { display: flex; justify-content: space-between; font-size: 0.85rem; margin: 3px 0; color: #ccc; }
+        .live-value { font-size: 1.2rem; font-weight: bold; color: #ff3366; }
+        
+        .grid-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 15px 0; }
+        .stat-box { background: #1a1a1a; padding: 12px; border-radius: 12px; border: 1px solid #333; }
+        .stat-label { font-size: 0.8rem; color: #aaa; }
+        .steps { font-size: 2.2rem; font-weight: bold; color: #00cc66; }
+        .coins { font-size: 2.2rem; font-weight: bold; color: #ffcc00; }
+        
+        button { background: #00cc66; color: #000; border: none; padding: 14px 28px; font-size: 1.1rem; border-radius: 30px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 10px; }
         button:active { background: #00994d; }
-        .status { color: #666; font-size: 0.85rem; margin-top: 15px; line-height: 1.4; }
+        .status { color: #666; font-size: 0.8rem; line-height: 1.4; }
+        
+        .history-section { border-top: 1px solid #333; margin-top: 20px; padding-top: 15px; text-align: left; }
+        .history-title { font-size: 1rem; color: #fff; margin-bottom: 10px; }
+        .history-list { max-height: 120px; overflow-y: auto; }
+        .history-item { display: flex; justify-content: space-between; background: #151515; padding: 8px 12px; border-radius: 8px; margin-bottom: 6px; font-size: 0.85rem; border-left: 4px solid #00cc66; }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <!-- 焼き付き防止のため、この枠全体の位置を定期的に微変動させます -->
         <div id="shiftTarget">
-            <div class="notice">⚠️ 計測中は画面を閉じないでください</div>
-            <h2>本日の歩数</h2>
-            <div class="steps" id="stepDisplay">0</div>
-            <button id="startBtn">計測を開始する</button>
-            <div class="status" id="statusText">
-                ボタンを押すと画面のスリープを防止し、<br>ポケット内での計測を開始します。
+            
+            <!-- 🔥 【新機能】リアルタイムデバッグパネル -->
+            <div class="debug-panel">
+                <div class="debug-title"><span>🛠️ リアルタイムセンサー解析</span><span id="pwaStatus">OFF</span></div>
+                <div class="debug-row"><span>現在の合成加速度:</span><span class="live-value" id="liveAcc">0.00</span></div>
+                <div class="debug-row"><span>静止時の最大値:</span><span id="stillMax" style="color:#00ff88">0.00</span></div>
+                <div class="debug-row"><span>歩行時の瞬間最大値:</span><span id="walkMax" style="color:#ffcc00">0.00</span></div>
+                <div class="debug-row" style="border-top: 1px solid #444; padding-top: 4px; margin-top: 4px;">
+                    <span>現在の設定閾値:</span><span id="currentThreshold" style="font-weight:bold; color:#00cc66;">11.0</span>
+                </div>
+            </div>
+            
+            <div class="grid-stats">
+                <div class="stat-box">
+                    <div class="stat-label">本日の歩数</div>
+                    <div class="steps" id="stepDisplay">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">獲得コイン</div>
+                    <div class="coins" id="coinDisplay">0.0</div>
+                </div>
+            </div>
+
+            <button id="startBtn">センサー接続＆計測開始</button>
+            <div class="status" id="statusText">ボタンを押すと、画面焼き付き防止・スリープ防止が同時に起動します。</div>
+
+            <div class="history-section">
+                <div class="history-title">📊 過去の記録</div>
+                <div class="history-list" id="historyList"></div>
             </div>
         </div>
     </div>
 
     <script>
-        let steps = parseInt(localStorage.getItem('pwa_steps')) || 0;
+        function getTodayString() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        const todayKey = getTodayString();
+        let trackingData = JSON.parse(localStorage.getItem('pedometer_logs')) || {};
+        if (!trackingData[todayKey]) { trackingData[todayKey] = { steps: 0, coins: 0.0 }; }
+
         const stepDisplay = document.getElementById('stepDisplay');
+        const coinDisplay = document.getElementById('coinDisplay');
         const startBtn = document.getElementById('startBtn');
         const statusText = document.getElementById('statusText');
         const shiftTarget = document.getElementById('shiftTarget');
+        const historyList = document.getElementById('historyList');
+        
+        // デバッグ用要素
+        const liveAcc = document.getElementById('liveAcc');
+        const stillMaxDisp = document.getElementById('stillMax');
+        const walkMaxDisp = document.getElementById('walkMax');
+        const pwaStatus = document.getElementById('pwaStatus');
+        const currentThresholdDisp = document.getElementById('currentThreshold');
 
-        stepDisplay.textContent = steps;
+        let stillMax = 0;
+        let walkMax = 0;
+        let isWalkingMode = false; // 最初は静止時チェックからスタート
+
+        // 🔥 【限界の感度設定】前回の検証に基づき、ノイズを拾いにくい限界値「11.0」を初期値に。
+        const THRESHOLD = 11.0; 
+        currentThresholdDisp.textContent = THRESHOLD;
+
+        function updateUI() {
+            stepDisplay.textContent = trackingData[todayKey].steps;
+            coinDisplay.textContent = trackingData[todayKey].coins.toFixed(1);
+        }
+        updateUI();
+        renderHistory();
 
         let wakeLock = null;
         let lastMagnitude = 0;
         let isPeak = false;
-        const THRESHOLD = 12.5; 
 
-        // 1. 【新機能】ピクセルシフト（焼き付き防止ロジック）
-        function applyPixelShift() {
-            // 上下左右に -5px 〜 +5px の範囲でランダムに変位させる
-            const maxShift = 5; 
-            const shiftX = Math.floor(Math.random() * (maxShift * 2 + 1)) - maxShift;
-            const shiftY = Math.floor(Math.random() * (maxShift * 2 + 1)) - maxShift;
-            
-            // CSSのtransformを使って位置をずらす
-            shiftTarget.style.transform = `translate(${shiftX}px, ${shiftY}px)`;
-            console.log(`ピクセルシフト実行: X=${shiftX}px, Y=${shiftY}px`);
-        }
-
-        // 30秒（30000ミリ秒）ごとに位置をずらすタイマーを設定
-        setInterval(applyPixelShift, 30000);
-
-
-        // 2. 画面のスリープを防止する関数
-        async function requestWakeLock() {
-            try {
-                if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                    console.log('Screen Wake Lock is active');
-                }
-            } catch (err) {
-                console.error(`スリープ防止エラー: ${err.name}, ${err.message}`);
+        function addStep() {
+            trackingData[todayKey].steps++;
+            if (trackingData[todayKey].steps % 3 === 0) {
+                trackingData[todayKey].coins += 0.5;
             }
+            localStorage.setItem('pedometer_logs', JSON.stringify(trackingData));
+            updateUI();
         }
 
-        // 3. 歩数カウント処理
+        function renderHistory() {
+            historyList.innerHTML = '';
+            const sortedKeys = Object.keys(trackingData).sort().reverse();
+            sortedKeys.forEach(key => {
+                const log = trackingData[key];
+                const displayDate = key === todayKey ? "今日" : key.slice(5);
+                const item = document.createElement('div');
+                item.className = 'history-item';
+                item.innerHTML = `<span>${displayDate}</span><span>${log.steps} 歩</span><span style="color:#ffcc00">+${log.coins.toFixed(1)} 🪙</span>`;
+                historyList.appendChild(item);
+            });
+        }
+
+        // 加速度センサーのリアルタイム解析
         function handleMotion(event) {
             const acc = event.accelerationIncludingGravity;
             if (!acc) return;
-
+            
+            // 3軸合成加速度の計算
             const magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+            
+            // 📊 リアルタイム数値を画面に反映
+            liveAcc.textContent = magnitude.toFixed(2);
 
+            // デバッグ計測ロジック
+            if (!isWalkingMode) {
+                // 【静止時】スマホをじっと持っている時の最大値を記録（地球の重力があるので9.8前後になります）
+                if (magnitude > stillMax) {
+                    stillMax = magnitude;
+                    stillMaxDisp.textContent = stillMax.toFixed(2);
+                }
+            } else {
+                // 【歩行時】ポケットに入れて歩いた時の最大パワーを記録
+                if (magnitude > walkMax) {
+                    walkMax = magnitude;
+                    walkMaxDisp.textContent = walkMax.toFixed(2);
+                }
+            }
+
+            // 歩行判定
             if (magnitude > THRESHOLD && magnitude < lastMagnitude && !isPeak) {
-                steps++;
-                stepDisplay.textContent = steps;
-                localStorage.setItem('pwa_steps', steps);
+                addStep();
                 isPeak = true;
-                setTimeout(() => { isPeak = false; }, 350); 
+                setTimeout(() => { isPeak = false; }, 300);
             }
             lastMagnitude = magnitude;
         }
 
-        // 4. 開始ボタン処理
+        // デバッグのモード切替（静止状態を5秒測ったら自動で歩行モードに切り替え）
+        function startDebugTimer() {
+            pwaStatus.textContent = "静止計測中...";
+            pwaStatus.style.color = "#00ff88";
+            
+            setTimeout(() => {
+                isWalkingMode = true;
+                pwaStatus.textContent = "歩行計測中...";
+                pwaStatus.style.color = "#ffcc00";
+                statusText.innerHTML = "🟢 デバッグ開始！スマホをポケットに入れて10歩ほど歩いてみてください。";
+            }, 5000); // 5秒後に歩行モードへ
+        }
+
+        async function requestWakeLock() {
+            try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
+        }
+
         startBtn.addEventListener('click', async () => {
             await requestWakeLock();
-
             if (typeof DeviceMotionEvent.requestPermission === 'function') {
                 try {
                     const permissionState = await DeviceMotionEvent.requestPermission();
                     if (permissionState === 'granted') {
                         window.addEventListener('devicemotion', handleMotion);
                         startBtn.style.display = 'none';
-                        statusText.innerHTML = "🟢 スリープ防止＆ピクセルシフト作動中。<br>画面を開いたままポケットに入れてください。";
-                    } else {
-                        alert('センサーが拒否されました');
+                        startDebugTimer();
                     }
-                } catch (e) {
-                    console.error(e);
-                }
+                } catch (e) { alert('センサーの起動に失敗しました'); }
             } else {
                 window.addEventListener('devicemotion', handleMotion);
                 startBtn.style.display = 'none';
-                statusText.innerHTML = "🟢 スリープ防止＆ピクセルシフト作動中。<br>画面を開いたままポケットに入れてください。";
+                startDebugTimer();
             }
         });
 
-        document.addEventListener('visibilitychange', async () => {
-            if (wakeLock !== null && document.visibilityState === 'visible') {
-                await requestWakeLock();
-            }
-        });
+        // ピクセルシフト（焼き付き対策）
+        setInterval(() => {
+            const maxShift = 5; 
+            const shiftX = Math.floor(Math.random() * (maxShift * 2 + 1)) - maxShift;
+            const shiftY = Math.floor(Math.random() * (maxShift * 2 + 1)) - maxShift;
+            shiftTarget.style.transform = `translate(${shiftX}px, ${shiftY}px)`;
+        }, 30000);
     </script>
 </body>
 </html>
