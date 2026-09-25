@@ -3,17 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>歩数計デバッガー＆コイン</title>
+    <title>爆速コイン歩数計 (Ajaxリアルタイム通信)</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; background: #000; color: #fff; margin: 0; padding: 10px; overflow-x: hidden; }
         .container { max-width: 400px; margin: 10px auto; padding: 15px; border-radius: 20px; background: #111; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
         #shiftTarget { position: relative; transition: all 0.5s ease; }
-        
-        /* 🔥 デバッグ表示エリア */
-        .debug-panel { background: #222; border: 2px dashed #00cc66; padding: 12px; border-radius: 15px; margin-bottom: 15px; text-align: left; font-family: monospace; }
-        .debug-title { font-size: 0.9rem; font-weight: bold; color: #00cc66; margin-bottom: 5px; display: flex; justify-content: space-between; }
-        .debug-row { display: flex; justify-content: space-between; font-size: 0.85rem; margin: 3px 0; color: #ccc; }
-        .live-value { font-size: 1.2rem; font-weight: bold; color: #ff3366; }
         
         .grid-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 15px 0; }
         .stat-box { background: #1a1a1a; padding: 12px; border-radius: 12px; border: 1px solid #333; }
@@ -25,10 +19,10 @@
         button:active { background: #00994d; }
         .status { color: #666; font-size: 0.8rem; line-height: 1.4; }
         
-        .history-section { border-top: 1px solid #333; margin-top: 20px; padding-top: 15px; text-align: left; }
-        .history-title { font-size: 1rem; color: #fff; margin-bottom: 10px; }
-        .history-list { max-height: 120px; overflow-y: auto; }
-        .history-item { display: flex; justify-content: space-between; background: #151515; padding: 8px 12px; border-radius: 8px; margin-bottom: 6px; font-size: 0.85rem; border-left: 4px solid #00cc66; }
+        /* 🔥 Ajax通信ステータス表示 */
+        .api-status { margin-top: 10px; padding: 8px; border-radius: 8px; font-size: 0.8rem; background: #222; border: 1px solid #444; color: #aaa; font-family: monospace; }
+        .api-success { color: #00ff88; font-weight: bold; }
+        .api-error { color: #ff3366; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -36,34 +30,24 @@
     <div class="container">
         <div id="shiftTarget">
             
-            <!-- 🔥 【新機能】リアルタイムデバッグパネル -->
-            <div class="debug-panel">
-                <div class="debug-title"><span>🛠️ リアルタイムセンサー解析</span><span id="pwaStatus">OFF</span></div>
-                <div class="debug-row"><span>現在の合成加速度:</span><span class="live-value" id="liveAcc">0.00</span></div>
-                <div class="debug-row"><span>静止時の最大値:</span><span id="stillMax" style="color:#00ff88">0.00</span></div>
-                <div class="debug-row"><span>歩行時の瞬間最大値:</span><span id="walkMax" style="color:#ffcc00">0.00</span></div>
-                <div class="debug-row" style="border-top: 1px solid #444; padding-top: 4px; margin-top: 4px;">
-                    <span>現在の設定閾値:</span><span id="currentThreshold" style="font-weight:bold; color:#00cc66;">11.0</span>
-                </div>
-            </div>
-            
             <div class="grid-stats">
                 <div class="stat-box">
                     <div class="stat-label">本日の歩数</div>
-                    <div class="steps" id="stepDisplay">0</div>
+                    <!-- 0.5歩単位を表現するため小数点第1位まで表示 -->
+                    <div class="steps" id="stepDisplay">0.0</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">獲得コイン</div>
-                    <div class="coins" id="coinDisplay">0.0</div>
+                    <div class="coins" id="coinDisplay">0</div>
                 </div>
             </div>
 
             <button id="startBtn">センサー接続＆計測開始</button>
             <div class="status" id="statusText">ボタンを押すと、画面焼き付き防止・スリープ防止が同時に起動します。</div>
 
-            <div class="history-section">
-                <div class="history-title">📊 過去の記録</div>
-                <div class="history-list" id="historyList"></div>
+            <!-- 🔥 Ajax同期ログ -->
+            <div class="api-status">
+                <span>サーバー同期状況: </span><span id="syncText">待機中</span>
             </div>
         </div>
     </div>
@@ -76,115 +60,97 @@
 
         const todayKey = getTodayString();
         let trackingData = JSON.parse(localStorage.getItem('pedometer_logs')) || {};
-        if (!trackingData[todayKey]) { trackingData[todayKey] = { steps: 0, coins: 0.0 }; }
+        if (!trackingData[todayKey]) { trackingData[todayKey] = { steps: 0.0, coins: 0 }; }
 
         const stepDisplay = document.getElementById('stepDisplay');
         const coinDisplay = document.getElementById('coinDisplay');
         const startBtn = document.getElementById('startBtn');
         const statusText = document.getElementById('statusText');
         const shiftTarget = document.getElementById('shiftTarget');
-        const historyList = document.getElementById('historyList');
-        
-        // デバッグ用要素
-        const liveAcc = document.getElementById('liveAcc');
-        const stillMaxDisp = document.getElementById('stillMax');
-        const walkMaxDisp = document.getElementById('walkMax');
-        const pwaStatus = document.getElementById('pwaStatus');
-        const currentThresholdDisp = document.getElementById('currentThreshold');
-
-        let stillMax = 0;
-        let walkMax = 0;
-        let isWalkingMode = false; // 最初は静止時チェックからスタート
-
-        // 🔥 【限界の感度設定】前回の検証に基づき、ノイズを拾いにくい限界値「11.0」を初期値に。
-        const THRESHOLD = 11.0; 
-        currentThresholdDisp.textContent = THRESHOLD;
+        const syncText = document.getElementById('syncText');
 
         function updateUI() {
-            stepDisplay.textContent = trackingData[todayKey].steps;
-            coinDisplay.textContent = trackingData[todayKey].coins.toFixed(1);
+            stepDisplay.textContent = trackingData[todayKey].steps.toFixed(1);
+            coinDisplay.textContent = trackingData[todayKey].coins.toLocaleString(); // カンマ区切り
         }
         updateUI();
-        renderHistory();
 
         let wakeLock = null;
         let lastMagnitude = 0;
         let isPeak = false;
+        const THRESHOLD = 11.0; // 高感度設定
 
-        function addStep() {
-            trackingData[todayKey].steps++;
-            if (trackingData[todayKey].steps % 3 === 0) {
-                trackingData[todayKey].coins += 0.5;
+        // 🔥 【新機能】Ajax（Fetch API）によるリアルタイム非同期更新
+        async function syncDataWithServer(steps, coins) {
+            syncText.className = '';
+            syncText.textContent = "同期中...";
+
+            // ⚠️ 送信先サーバーのURL（あなたのバックエンドAPIのURLに書き換えてください）
+            const API_URL = 'https://example.com'; 
+
+            try {
+                // 現代のAjax（Fetch API）を使った非同期POST送信
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        date: todayKey,
+                        steps: steps,
+                        coins: coins,
+                        timestamp: Date.now()
+                    })
+                });
+
+                if (response.ok) {
+                    syncText.className = 'api-success';
+                    syncText.textContent = "成功 🟢 (画面リロードなしで完了)";
+                } else {
+                    throw new Error('サーバーエラー');
+                }
+            } catch (error) {
+                // テスト用にURLがダミー（example.com）なので、最初は必ずここを通ります（動作は正常です）
+                syncText.className = 'api-error';
+                syncText.textContent = "通信エラー ❌ (ローカルには保存済)";
+                console.log("Ajax送信エラー（ローカル保存は成功しています）:", error.message);
             }
+        }
+
+        // 🔥 【新機能】0.5歩で160コイン加算ロジック
+        function addHalfStep() {
+            // 0.5歩を加算
+            trackingData[todayKey].steps += 0.5;
+            // 160コインを加算
+            trackingData[todayKey].coins += 160;
+
+            // ローカル（LocalStorage）に即座にバックアップ
             localStorage.setItem('pedometer_logs', JSON.stringify(trackingData));
             updateUI();
+
+            // リアルタイムにAjaxで非同期サーバー送信（画面は一切カクつきません）
+            syncDataWithServer(trackingData[todayKey].steps, trackingData[todayKey].coins);
         }
 
-        function renderHistory() {
-            historyList.innerHTML = '';
-            const sortedKeys = Object.keys(trackingData).sort().reverse();
-            sortedKeys.forEach(key => {
-                const log = trackingData[key];
-                const displayDate = key === todayKey ? "今日" : key.slice(5);
-                const item = document.createElement('div');
-                item.className = 'history-item';
-                item.innerHTML = `<span>${displayDate}</span><span>${log.steps} 歩</span><span style="color:#ffcc00">+${log.coins.toFixed(1)} 🪙</span>`;
-                historyList.appendChild(item);
-            });
-        }
-
-        // 加速度センサーのリアルタイム解析
+        // センサー監視
         function handleMotion(event) {
             const acc = event.accelerationIncludingGravity;
             if (!acc) return;
-            
-            // 3軸合成加速度の計算
             const magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-            
-            // 📊 リアルタイム数値を画面に反映
-            liveAcc.textContent = magnitude.toFixed(2);
 
-            // デバッグ計測ロジック
-            if (!isWalkingMode) {
-                // 【静止時】スマホをじっと持っている時の最大値を記録（地球の重力があるので9.8前後になります）
-                if (magnitude > stillMax) {
-                    stillMax = magnitude;
-                    stillMaxDisp.textContent = stillMax.toFixed(2);
-                }
-            } else {
-                // 【歩行時】ポケットに入れて歩いた時の最大パワーを記録
-                if (magnitude > walkMax) {
-                    walkMax = magnitude;
-                    walkMaxDisp.textContent = walkMax.toFixed(2);
-                }
-            }
-
-            // 歩行判定
+            // 1回のピーク（半歩分の動き）を検知
             if (magnitude > THRESHOLD && magnitude < lastMagnitude && !isPeak) {
-                addStep();
+                addHalfStep();
                 isPeak = true;
-                setTimeout(() => { isPeak = false; }, 300);
+                setTimeout(() => { isPeak = false; }, 300); // 連続カウント防止
             }
             lastMagnitude = magnitude;
         }
 
-        // デバッグのモード切替（静止状態を5秒測ったら自動で歩行モードに切り替え）
-        function startDebugTimer() {
-            pwaStatus.textContent = "静止計測中...";
-            pwaStatus.style.color = "#00ff88";
-            
-            setTimeout(() => {
-                isWalkingMode = true;
-                pwaStatus.textContent = "歩行計測中...";
-                pwaStatus.style.color = "#ffcc00";
-                statusText.innerHTML = "🟢 デバッグ開始！スマホをポケットに入れて10歩ほど歩いてみてください。";
-            }, 5000); // 5秒後に歩行モードへ
-        }
-
+        // スリープ防止
         async function requestWakeLock() {
             try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
         }
 
+        // 開始ボタン処理
         startBtn.addEventListener('click', async () => {
             await requestWakeLock();
             if (typeof DeviceMotionEvent.requestPermission === 'function') {
@@ -193,13 +159,13 @@
                     if (permissionState === 'granted') {
                         window.addEventListener('devicemotion', handleMotion);
                         startBtn.style.display = 'none';
-                        startDebugTimer();
+                        statusText.innerHTML = "🟢 計測中。30秒ごとにピクセルシフトが起動します。";
                     }
                 } catch (e) { alert('センサーの起動に失敗しました'); }
             } else {
                 window.addEventListener('devicemotion', handleMotion);
                 startBtn.style.display = 'none';
-                startDebugTimer();
+                statusText.innerHTML = "🟢 計測中。30秒ごとにピクセルシフトが起動します。";
             }
         });
 
